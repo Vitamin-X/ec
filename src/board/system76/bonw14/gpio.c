@@ -42,6 +42,10 @@ struct Gpio __code XLP_OUT =        GPIO(B, 4); // renamed to EN_3V
 // clang-format on
 
 void gpio_init() {
+    // Enable power switch WDT
+    GCR9 = BIT(5);
+    GCR8 = BIT(4);
+
     // Enable LPC reset on GPD2
     GCR = 0x04;
     // Enable SMBus channel 4
