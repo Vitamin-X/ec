@@ -297,6 +297,11 @@ void power_off(void) {
 #endif // HAVE_PCH_DPWROK_EC
     tPCH14;
 
+#if HAVE_XLP_OUT
+        // Power off VDD3 if system should be off
+        gpio_set(&XLP_OUT, 0);
+#endif // HAVE_XLP_OUT
+
     // Configure WLAN GPIOs after powering off
     wireless_power(false);
 
@@ -591,11 +596,6 @@ void power_event(void) {
             gpio_set(&LED_ACIN, !gpio_get(&LED_ACIN));
             last_time = time;
         }
-
-#if HAVE_XLP_OUT
-        // Power off VDD3 if system should be off
-        gpio_set(&XLP_OUT, 0);
-#endif // HAVE_XLP_OUT
     }
 
 //TODO: do not require both LEDs
