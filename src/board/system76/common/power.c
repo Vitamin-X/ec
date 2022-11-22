@@ -366,6 +366,146 @@ static bool power_button_disabled(void) {
 }
 
 /**
+ * Handle plug/unplug of the AC adapter.
+ */
+static bool power_check_ac(void) {
+    static bool ac_send_sci = true;
+    static bool ac_last = true;
+    const bool ac_new = gpio_get(&ACIN_N);
+
+    if (ac_new != ac_last) {
+        power_set_limit();
+
+        DEBUG("Power adapter ");
+        if (ac_new) {
+            DEBUG("unplugged\n");
+            battery_charger_disable();
+        } else {
+            DEBUG("plugged in\n");
+            battery_charger_configure();
+        }
+        battery_debug();
+
+        // Reset main loop cycle to force reading PECI and battery
+        main_cycle = 0;
+
+        // Send SCI to update AC and battery information
+        ac_send_sci = true;
+    }
+
+    if (ac_send_sci) {
+        // Send SCI 0x16 for AC detect event if ACPI OS is loaded
+        if (acpi_ecos != EC_OS_NONE) {
+            if (pmc_sci(&PMC_1, 0x16)) {
+                ac_send_sci = false;
+            }
+        }
+    }
+
+    ac_last = ac_new;
+    return ac_new;
+}
+
+/**
+ * Handle ALL_SYS_PWRGD assert/de-assert.
+ */
+static void power_handle_all_sys_pwrgd(void) {
+    static bool pg_last = false;
+    const bool pg_new = gpio_get(&ALL_SYS_PWRGD);
+    if (pg_new && !pg_last) {
+        DEBUG("%02X: ALL_SYS_PWRGD asserted\n", main_cycle);
+
+        //TODO: tPLT04;
+
+#if HAVE_PM_PWROK
+        // Allow H_VR_READY to set PCH_PWROK
+        GPIO_SET_DEBUG(PM_PWROK, true);
+#endif // HAVE_PM_PWROK
+
+        // OEM defined delay from ALL_SYS_PWRGD to SYS_PWROK - TODO
+        delay_ms(10);
+
+#if HAVE_PCH_PWROK_EC
+        // Assert SYS_PWROK, system can finally perform PLT_RST# and boot
+        GPIO_SET_DEBUG(PCH_PWROK_EC, true);
+#endif // HAVE_PCH_PWROK_EC
+    } else if(!pg_new && pg_last) {
+        DEBUG("%02X: ALL_SYS_PWRGD de-asserted\n", main_cycle);
+
+#if HAVE_PCH_PWROK_EC
+        // De-assert SYS_PWROK
+        GPIO_SET_DEBUG(PCH_PWROK_EC, false);
+#endif // HAVE_PCH_PWROK_EC
+
+#if HAVE_PM_PWROK
+        // De-assert PCH_PWROK
+        GPIO_SET_DEBUG(PM_PWROK, false);
+#endif // HAVE_PM_PWROK
+    }
+    pg_last = pg_new;
+}
+
+/**
+ * Check if BUF_PLT_RST# was de-asserted.
+ */
+static bool power_buf_plt_rst_deasserted(void) {
+    static bool rst_last = false;
+    const bool rst_new = gpio_get(&BUF_PLT_RST_N);
+    const bool deasserted = rst_new && !rst_last;
+
+#if LEVEL >= LEVEL_DEBUG
+    if (!rst_new && rst_last) {
+        DEBUG("%02X: PLT_RST# asserted\n", main_cycle);
+    } else if (deasserted) {
+        DEBUG("%02X: PLT_RST# de-asserted\n", main_cycle);
+    }
+#endif
+
+    rst_last = rst_new;
+    return deasserted;
+}
+
+#if HAVE_SUSWARN_N && !EC_ESPI
+static bool power_get_suswarn(void) {
+    static bool ack_last = false;
+    const bool ack_new = gpio_get(&SUSWARN_N);
+
+#if LEVEL >= LEVEL_DEBUG
+    if (ack_new && !ack_last) {
+        DEBUG("%02X: SUSPWRDNACK asserted\n", main_cycle);
+    } else if (!ack_new && ack_last) {
+        DEBUG("%02X: SUSPWRDNACK de-asserted\n", main_cycle);
+    }
+#endif
+
+    ack_last = ack_new;
+    return ack_new;
+}
+#endif
+
+/**
+ * Check if LAN_WAKEUP# was asserted.
+ */
+#if HAVE_LAN_WAKEUP_N
+static bool power_wake_on_lan_asserted(void) {
+    static bool wake_last = true;
+    const bool wake_new = gpio_get(&LAN_WAKEUP_N);
+    const bool asserted = !wake_new && wake_last;
+
+#if LEVEL >= LEVEL_DEBUG
+    if (asserted) {
+        DEBUG("%02X: LAN_WAKEUP# asserted\n", main_cycle);
+    } else if (wake_new && !wake_last) {
+        DEBUG("%02X: LAN_WAKEUP# de-asserted\n", main_cycle);
+    }
+#endif
+
+    wake_last = wake_new;
+    return asserted;
+}
+#endif
+
+/**
  * Update power LEDs.
  */
 static void power_update_power_leds(bool ac_new) {
@@ -437,38 +577,7 @@ static void power_update_battery_leds(bool ac_new) {
 #endif // HAVE_LED_BAT_CHG && HAVE_LED_BAT_FULL
 
 void power_event(void) {
-    // Check if the adapter line goes low
-    static bool ac_send_sci = true;
-    static bool ac_last = true;
-    bool ac_new = gpio_get(&ACIN_N);
-    if (ac_new != ac_last) {
-        power_set_limit();
-
-        DEBUG("Power adapter ");
-        if (ac_new) {
-            DEBUG("unplugged\n");
-            battery_charger_disable();
-        } else {
-            DEBUG("plugged in\n");
-            battery_charger_configure();
-        }
-        battery_debug();
-
-        // Reset main loop cycle to force reading PECI and battery
-        main_cycle = 0;
-
-        // Send SCI to update AC and battery information
-        ac_send_sci = true;
-    }
-    if (ac_send_sci) {
-        // Send SCI 0x16 for AC detect event if ACPI OS is loaded
-        if (acpi_ecos != EC_OS_NONE) {
-            if (pmc_sci(&PMC_1, 0x16)) {
-                ac_send_sci = false;
-            }
-        }
-    }
-    ac_last = ac_new;
+    const bool ac_new = power_check_ac();
 
     gpio_set(&AC_PRESENT, !ac_new);
 
@@ -510,11 +619,11 @@ void power_event(void) {
             }
         }
     }
-    #if LEVEL >= LEVEL_DEBUG
-        else if (ps_new && !ps_last) {
-            DEBUG("%02X: Power switch release\n", main_cycle);
-        }
-    #endif
+#if LEVEL >= LEVEL_DEBUG
+    else if (ps_new && !ps_last) {
+        DEBUG("%02X: Power switch release\n", main_cycle);
+    }
+#endif
     ps_last = ps_new;
 
     // Send power signal to PCH
@@ -524,88 +633,34 @@ void power_event(void) {
     update_power_state();
 
     // If system power is good
-    static bool pg_last = false;
-    bool pg_new = gpio_get(&ALL_SYS_PWRGD);
-    if (pg_new && !pg_last) {
-        DEBUG("%02X: ALL_SYS_PWRGD asserted\n", main_cycle);
+    power_handle_all_sys_pwrgd();
 
-        //TODO: tPLT04;
-
-#if HAVE_PM_PWROK
-        // Allow H_VR_READY to set PCH_PWROK
-        GPIO_SET_DEBUG(PM_PWROK, true);
-#endif // HAVE_PM_PWROK
-
-        // OEM defined delay from ALL_SYS_PWRGD to SYS_PWROK - TODO
-        delay_ms(10);
-
-#if HAVE_PCH_PWROK_EC
-        // Assert SYS_PWROK, system can finally perform PLT_RST# and boot
-        GPIO_SET_DEBUG(PCH_PWROK_EC, true);
-#endif // HAVE_PCH_PWROK_EC
-    } else if(!pg_new && pg_last) {
-        DEBUG("%02X: ALL_SYS_PWRGD de-asserted\n", main_cycle);
-
-#if HAVE_PCH_PWROK_EC
-        // De-assert SYS_PWROK
-        GPIO_SET_DEBUG(PCH_PWROK_EC, false);
-#endif // HAVE_PCH_PWROK_EC
-
-#if HAVE_PM_PWROK
-        // De-assert PCH_PWROK
-        GPIO_SET_DEBUG(PM_PWROK, false);
-#endif // HAVE_PM_PWROK
-    }
-    pg_last = pg_new;
-
-    static bool rst_last = false;
-    bool rst_new = gpio_get(&BUF_PLT_RST_N);
-    #if LEVEL >= LEVEL_DEBUG
-        if (!rst_new && rst_last) {
-            DEBUG("%02X: PLT_RST# asserted\n", main_cycle);
-        } else
-    #endif
-    if(rst_new && !rst_last) {
-        DEBUG("%02X: PLT_RST# de-asserted\n", main_cycle);
+    if (power_buf_plt_rst_deasserted()) {
 #if EC_ESPI
         espi_reset();
 #else // EC_ESPI
         power_cpu_reset();
 #endif // EC_ESPI
     }
-    rst_last = rst_new;
 
 #if HAVE_SLP_SUS_N
-    #if LEVEL >= LEVEL_DEBUG
-        static bool sus_last = true;
-        bool sus_new = gpio_get(&SLP_SUS_N);
-        if (!sus_new && sus_last) {
-            DEBUG("%02X: SLP_SUS# asserted\n", main_cycle);
-        } else if (sus_new && !sus_last) {
-            DEBUG("%02X: SLP_SUS# de-asserted\n", main_cycle);
-        }
-        sus_last = sus_new;
-    #endif
+#if LEVEL >= LEVEL_DEBUG
+    static bool sus_last = true;
+    bool sus_new = gpio_get(&SLP_SUS_N);
+    if (!sus_new && sus_last) {
+        DEBUG("%02X: SLP_SUS# asserted\n", main_cycle);
+    } else if (sus_new && !sus_last) {
+        DEBUG("%02X: SLP_SUS# de-asserted\n", main_cycle);
+    }
+    sus_last = sus_new;
+#endif
 #endif // HAVE_SLP_SUS_N
 
-#if EC_ESPI
-    // ESPI systems, always power off if in S5 power state
-#elif HAVE_SUSWARN_N
+#if HAVE_SUSWARN_N && !EC_ESPI
     // EC must keep VccPRIM powered if SUSPWRDNACK is de-asserted low or system
     // state is S3
-    static bool ack_last = false;
-    bool ack_new = gpio_get(&SUSWARN_N);
-    #if LEVEL >= LEVEL_DEBUG
-        if (ack_new && !ack_last) {
-            DEBUG("%02X: SUSPWRDNACK asserted\n", main_cycle);
-        } else if (!ack_new && ack_last) {
-            DEBUG("%02X: SUSPWRDNACK de-asserted\n", main_cycle);
-        }
-    #endif
-    ack_last = ack_new;
-
-    if (ack_new)
-#endif // HAVE_SUSWARN_N
+    if (power_get_suswarn())
+#endif // HAVE_SUSWARN_N && !EC_ESPI
     {
         // Disable S5 power plane if not needed
         if (power_state == POWER_STATE_S5) {
@@ -614,22 +669,13 @@ void power_event(void) {
     }
 
 #if HAVE_LAN_WAKEUP_N
-    static bool wake_last = true;
-    bool wake_new = gpio_get(&LAN_WAKEUP_N);
-    if (!wake_new && wake_last) {
+    if (power_wake_on_lan_asserted()) {
         update_power_state();
-        DEBUG("%02X: LAN_WAKEUP# asserted\n", main_cycle);
         if (power_state == POWER_STATE_OFF) {
             power_on();
         }
     }
-    #if LEVEL >= LEVEL_DEBUG
-        else if (wake_new && !wake_last) {
-            DEBUG("%02X: LAN_WAKEUP# de-asserted\n", main_cycle);
-        }
-    #endif
-    wake_last = wake_new;
-#endif // HAVE_LAN_WAKEUP_N
+#endif
 
     power_update_power_leds(ac_new);
 #if HAVE_LED_BAT_CHG && HAVE_LED_BAT_FULL
