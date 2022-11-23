@@ -60,6 +60,11 @@ include $(ARCH_DIR)/toolchain.mk
 # The architecture defines build targets, no more is required
 endif
 
+.PHONY: docs
+docs:
+	@mdbook build docs/
+
 # Target to remove build artifacts
+.PHONY: clean
 clean:
 	rm -rf build
