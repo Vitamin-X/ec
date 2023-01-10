@@ -5,51 +5,14 @@ laptops.
 
 ## Documentation
 
-- [Supported embedded controllers](./docs/controllers.md)
-- [Flashing firmware](./docs/flashing.md)
-- [Debugging](./docs/debugging.md)
-- [Creating a custom keyboard layout](./docs/keyboard-layout-customization.md)
-- [Development environment](./docs/dev-env.md)
-- [Adding a new board](./docs/adding-a-new-board.md)
-
-## Quickstart
-
-Install dependencies using the provided script.
-
-```sh
-./scripts/deps.sh
-```
-
-If rustup was installed as part of this, then the correct `cargo` will not be
-available in the running session. Start a new shell session or source the env
-file to update `PATH`.
-
-```sh
-source $HOME/.cargo/env
-```
-
-Then build the firmware for your laptop model.
-
-```sh
-make BOARD=system76/<model>
-```
-
-See [Flashing](./docs/flashing.md) for how to use the new firmware image.
-
-## Releases
-
-The EC firmware itself does not have tagged releases. Any commit of this repo
-may be used as a part of a [System76 Open Firmware][firmware-open] release.
-
-In official releases the EC shares the same version as the BIOS firmware. Run
-the follow command from firmware-open to determine the corresponding EC commit
-for a release.
+Documentation is available in `docs/`. It is set up to be used with [mdBook],
+which can generate HTML output for easy navigation.
 
 ```
-git ls-tree <release_hash> ec
+mdbook build --open docs/
 ```
 
-[firmware-open]: https://github.com/system76/firmware-open
+- [Index][index]
 
 ## Legal
 
@@ -64,8 +27,11 @@ Public License, version 3. See [LICENSE](./LICENSE) for details.
 - ectool: MIT
 
 Datasheets for the ITE embedded controllers used in System76 laptops cannot be
-shared outside of company. (However, the IT81202E datasheet is [publicly
+shared outside of company. However, the IT81202E datasheet is [publicly
 available][it81202e]. While it uses a different core, a significant portion of
-the register information is the same as IT85878E/IT5570E.)
+the register information is the same as IT85878E/IT5570E.
 
+
+[index]: ./docs/index.md
 [it81202e]: https://www.ite.com.tw/en/product/view?mid=149
+[mdBook]: https://github.com/rust-lang/mdBook
