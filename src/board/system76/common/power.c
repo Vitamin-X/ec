@@ -304,7 +304,7 @@ void power_off(void) {
     update_power_state();
 }
 
-#ifdef HAVE_DGPU
+#ifdef CONFIG_HAVE_DGPU
 static bool power_peci_limit(bool ac) {
     uint8_t watts = ac ? POWER_LIMIT_AC : POWER_LIMIT_DC;
     // Set PL4 using PECI
@@ -342,7 +342,7 @@ void power_set_limit(void) {
 }
 #else
 void power_set_limit(void) {}
-#endif // HAVE_DGPU
+#endif // CONFIG_HAVE_DGPU
 
 // This function is run when the CPU is reset
 void power_cpu_reset(void) {

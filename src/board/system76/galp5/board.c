@@ -29,9 +29,9 @@ void board_init(void) {
 }
 
 void board_event(void) {
-#if HAVE_DGPU
+#if CONFIG_HAVE_DGPU
     power_set_limit();
-#endif // HAVE_DGPU
+#endif
 
     espi_event();
 
